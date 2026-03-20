@@ -1,0 +1,284 @@
+<!-- templates/admin_dashboard.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - GlobalStore</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #0f172a; color: #f8fafc; font-family: 'Inter', sans-serif; }
+        .glass-card { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); z-index: 1000; align-items: center; justify-content: center; }
+        .modal.active { display: flex; }
+        .modal-content { background: #1e293b; border: 1px solid #334155; border-radius: 1rem; width: 100%; max-width: 500px; padding: 2rem; position: relative; }
+        .close-modal { position: absolute; top: 1rem; right: 1.5rem; color: #94a3b8; cursor: pointer; font-size: 1.5rem; }
+        .close-modal:hover { color: #f8fafc; }
+    </style>
+</head>
+<body class="min-h-screen">
+    <!-- Navigation -->
+    <nav class="bg-dark-800 border-b border-dark-700 fixed w-full z-50 top-0">
+        <div class="container mx-auto px-6 py-4 flex justify-between items-center">
+            <a href="/" class="text-2xl font-bold text-white flex items-center gap-2">
+                <i class="fas fa-cube text-primary-500"></i> GlobalStore Admin
+            </a>
+            <div class="flex items-center gap-6">
+                <span class="text-green-400">Admin: {{ current_user.username }}</span>
+                <a href="/logout" class="text-gray-400 hover:text-white">
+                    <i class="fas fa-sign-out-alt"></i>
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mx-auto px-6 pt-24 pb-12">
+        <div class="flex justify-between items-center mb-8">
+            <h1 class="text-3xl font-bold">Admin Dashboard</h1>
+            <div class="flex gap-3">
+                <a href="/admin/products/manage" class="bg-blue-600 hover:bg-blue-500 px-5 py-2 rounded-lg transition-all flex items-center gap-2">
+                    <i class="fas fa-boxes"></i> Termékek kezelése
+                </a>
+                <a href="/" class="bg-gray-600 hover:bg-gray-500 px-5 py-2 rounded-lg transition-all">
+                    <i class="fas fa-home"></i> Vissza a boltba
+                </a>
+            </div>
+        </div>
+        
+        <!-- Quick Stats -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+            <div class="glass-card rounded-xl p-6">
+                <div class="text-gray-400 mb-2">Total Users</div>
+                <div class="text-3xl font-bold" id="total-users">{{ users|length }}</div>
+            </div>
+            <div class="glass-card rounded-xl p-6">
+                <div class="text-gray-400 mb-2">Total Products</div>
+                <div class="text-3xl font-bold" id="total-products">{{ products|length }}</div>
+            </div>
+            <div class="glass-card rounded-xl p-6">
+                <div class="text-gray-400 mb-2">Total Purchases</div>
+                <div class="text-3xl font-bold" id="total-purchases">{{ purchases|length }}</div>
+            </div>
+            <div class="glass-card rounded-xl p-6">
+                <div class="text-gray-400 mb-2">Active Products</div>
+                <div class="text-3xl font-bold" id="active-products">{{ products|selectattr('is_active', 'equalto', true)|list|length }}</div>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="border-b border-dark-700 mb-6">
+            <div class="flex space-x-8">
+                <button onclick="showTab('users')" class="tab-button active py-2 px-1 border-b-2 border-primary-500 text-primary-500 font-medium">Users</button>
+                <button onclick="showTab('products')" class="tab-button py-2 px-1 border-b-2 border-transparent hover:text-white">Products</button>
+                <button onclick="showTab('purchases')" class="tab-button py-2 px-1 border-b-2 border-transparent hover:text-white">Purchases</button>
+                <button onclick="showTab('send-balance')" class="tab-button py-2 px-1 border-b-2 border-transparent hover:text-white">Send Balance</button>
+            </div>
+        </div>
+
+        <!-- Users Tab -->
+        <div id="tab-users" class="tab-content">
+            <div class="glass-card rounded-xl overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead class="bg-dark-900">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">ID</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Username</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Balance</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Discord ID</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Admin</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Joined</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-dark-700">
+                            {% for user in users %}
+                            <tr class="hover:bg-dark-800/50">
+                                <td class="px-6 py-4">{{ user.id }}</td>
+                                <td class="px-6 py-4 font-medium">{{ user.username }}</td>
+                                <td class="px-6 py-4 text-green-400">${{ "%.2f"|format(user.balance) }}</td>
+                                <td class="px-6 py-4">{{ user.discord_id or '-' }}</td>
+                                <td class="px-6 py-4">
+                                    {% if user.is_admin %}
+                                    <span class="bg-primary-500/20 text-primary-400 px-2 py-1 rounded-full text-xs">Yes</span>
+                                    {% else %}
+                                    <span class="text-gray-500">No</span>
+                                    {% endif %}
+                                </td>
+                                <td class="px-6 py-4 text-sm text-gray-400">{{ user.created_at.strftime('%Y-%m-%d') }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Products Tab -->
+        <div id="tab-products" class="tab-content hidden">
+            <div class="glass-card rounded-xl overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead class="bg-dark-900">
+                             <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">ID</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">SKU</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Name</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Our Price</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">DailyStore Price</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Status</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-dark-700">
+                            {% for product in products %}
+                            <tr class="hover:bg-dark-800/50">
+                                <td class="px-6 py-4">{{ product.id }}</td>
+                                <td class="px-6 py-4 font-mono text-sm">{{ product.sku }}</td>
+                                <td class="px-6 py-4">{{ product.name }}</td>
+                                <td class="px-6 py-4 text-green-400">${{ "%.2f"|format(product.price) }}</td>
+                                <td class="px-6 py-4 text-gray-400">${{ "%.2f"|format(product.daily_store_price) }}</td>
+                                <td class="px-6 py-4">
+                                    <span class="px-2 py-1 rounded-full text-xs {% if product.is_active %}bg-green-500/20 text-green-400{% else %}bg-red-500/20 text-red-400{% endif %}">
+                                        {{ 'Active' if product.is_active else 'Inactive' }}
+                                    </span>
+                                </td>
+                                <td class="px-6 py-4">
+                                    <a href="/admin/products/manage" class="text-primary-400 hover:text-primary-300 text-sm">
+                                        <i class="fas fa-edit mr-1"></i> Edit
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Purchases Tab -->
+        <div id="tab-purchases" class="tab-content hidden">
+            <div class="glass-card rounded-xl overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead class="bg-dark-900">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Order ID</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">User</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Product</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Price</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Method</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Date</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">DailyStore Order</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-dark-700">
+                            {% for purchase in purchases %}
+                            <tr class="hover:bg-dark-800/50">
+                                <td class="px-6 py-4 font-mono text-sm">{{ purchase.id }}</td>
+                                <td class="px-6 py-4">{{ purchase.user.username }}</td>
+                                <td class="px-6 py-4">{{ purchase.product.name if purchase.product else 'Unknown' }}</td>
+                                <td class="px-6 py-4 text-green-400">${{ "%.2f"|format(purchase.price_paid) }}</td>
+                                <td class="px-6 py-4">
+                                    <span class="bg-dark-900 px-2 py-1 rounded text-xs">{{ purchase.payment_method or 'balance' }}</span>
+                                </td>
+                                <td class="px-6 py-4 text-sm text-gray-400">{{ purchase.purchased_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                                <td class="px-6 py-4">
+                                    {% if purchase.daily_store_order_id %}
+                                    <span class="text-xs font-mono">{{ purchase.daily_store_order_id[:10] }}...</span>
+                                    {% else %}
+                                    -
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Send Balance Tab -->
+        <div id="tab-send-balance" class="tab-content hidden">
+            <div class="glass-card rounded-xl p-8 max-w-md mx-auto">
+                <h2 class="text-2xl font-bold mb-6">Send Balance to User</h2>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-gray-400 text-sm mb-2">Username</label>
+                        <input type="text" id="target-username" class="w-full bg-dark-900 border border-dark-700 rounded-lg px-4 py-3">
+                    </div>
+                    
+                    <div>
+                        <label class="block text-gray-400 text-sm mb-2">Amount ($)</label>
+                        <input type="number" id="amount" step="0.01" min="0.01" class="w-full bg-dark-900 border border-dark-700 rounded-lg px-4 py-3">
+                    </div>
+                    
+                    <div class="flex gap-4 pt-4">
+                        <button onclick="sendBalance('add')" class="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-lg transition-all">
+                            <i class="fas fa-plus mr-2"></i>Add Balance
+                        </button>
+                        <button onclick="sendBalance('remove')" class="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-lg transition-all">
+                            <i class="fas fa-minus mr-2"></i>Remove Balance
+                        </button>
+                    </div>
+                    
+                    <div id="balance-result" class="mt-4 p-4 rounded-lg hidden"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function showTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.add('hidden');
+            });
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active', 'border-primary-500', 'text-primary-500');
+                btn.classList.add('border-transparent');
+            });
+            document.getElementById(`tab-${tabName}`).classList.remove('hidden');
+            event.target.classList.add('active', 'border-primary-500', 'text-primary-500');
+        }
+        
+        async function sendBalance(action) {
+            const username = document.getElementById('target-username').value;
+            const amount = document.getElementById('amount').value;
+            const resultDiv = document.getElementById('balance-result');
+            
+            if (!username || !amount) {
+                alert('Please fill all fields');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/admin/send-balance', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: username,
+                        amount: parseFloat(amount),
+                        action: action
+                    })
+                });
+                
+                const data = await response.json();
+                resultDiv.classList.remove('hidden');
+                
+                if (data.success) {
+                    resultDiv.className = 'mt-4 p-4 rounded-lg bg-green-500/20 border border-green-500/50 text-green-400';
+                    resultDiv.innerHTML = `✅ Success! New balance for ${username}: $${data.new_balance.toFixed(2)}`;
+                } else {
+                    resultDiv.className = 'mt-4 p-4 rounded-lg bg-red-500/20 border border-red-500/50 text-red-400';
+                    resultDiv.innerHTML = `❌ Error: ${data.error}`;
+                }
+            } catch (err) {
+                resultDiv.classList.remove('hidden');
+                resultDiv.className = 'mt-4 p-4 rounded-lg bg-red-500/20 border border-red-500/50 text-red-400';
+                resultDiv.innerHTML = `❌ Error: ${err.message}`;
+            }
+        }
+    </script>
+</body>
+</html>
