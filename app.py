@@ -4,6 +4,7 @@ import json
 import requests
 import traceback
 import smtplib
+import threading
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -87,9 +88,34 @@ def send_admin_alert(subject, message):
         return False
 
 # ============================================================
-# DAILYSTORE API FUNKCIÓK
+# DAILYSTORE API FUNKCIÓK (ASZINKRON ELLENŐRZÉSHEZ)
 # ============================================================
+def check_dailystore_stock_async(sku, callback):
+    """Aszinkron stock ellenőrzés (nem blokkolja a főszálat)"""
+    try:
+        headers = {'Authorization': f'Bearer {DAILYSTORE_API_KEY}'}
+        response = requests.get(f'{DAILYSTORE_API_URL}/stock/{sku}', headers=headers, timeout=5)
+        if response.status_code == 200:
+            callback(response.json().get('stock', 0))
+        else:
+            callback(999)
+    except:
+        callback(999)
+
+def check_dailystore_balance_async(callback):
+    """Aszinkron balance ellenőrzés (nem blokkolja a főszálat)"""
+    try:
+        headers = {'Authorization': f'Bearer {DAILYSTORE_API_KEY}'}
+        response = requests.get(f'{DAILYSTORE_API_URL}/balance', headers=headers, timeout=5)
+        if response.status_code == 200:
+            callback(response.json().get('balance', 0))
+        else:
+            callback(999)
+    except:
+        callback(999)
+
 def check_dailystore_stock(sku):
+    """Szinkron stock ellenőrzés (balance vásárláshoz)"""
     try:
         headers = {'Authorization': f'Bearer {DAILYSTORE_API_KEY}'}
         response = requests.get(f'{DAILYSTORE_API_URL}/stock/{sku}', headers=headers, timeout=10)
@@ -100,6 +126,7 @@ def check_dailystore_stock(sku):
         return 999
 
 def check_dailystore_balance():
+    """Szinkron balance ellenőrzés (balance vásárláshoz)"""
     try:
         headers = {'Authorization': f'Bearer {DAILYSTORE_API_KEY}'}
         response = requests.get(f'{DAILYSTORE_API_URL}/balance', headers=headers, timeout=10)
@@ -243,7 +270,6 @@ def dashboard():
 # ============================================================
 @app.route('/api/test', methods=['GET'])
 def test():
-    """Teszt végpont a szerver ellenőrzéséhez"""
     return jsonify({'status': 'ok', 'message': 'API is working'})
 
 @app.route('/api/products/<int:product_id>', methods=['GET'])
@@ -267,14 +293,13 @@ def get_product_by_id(product_id):
 
 @app.route('/api/create-payment-intent', methods=['POST'])
 def create_payment_intent():
-    """Stripe PaymentIntent létrehozása (kártyás fizetés)"""
+    """Stripe PaymentIntent létrehozása - ASZINKRON DailyStore ellenőrzéssel"""
     try:
         data = request.get_json()
         amount = data.get('amount')
         product_id = data.get('product_id')
         
         if amount:
-            # Balance feltöltés
             if not current_user.is_authenticated:
                 return jsonify({'error': 'Login required'}), 401
             intent = stripe.PaymentIntent.create(
@@ -286,28 +311,29 @@ def create_payment_intent():
             return jsonify({'clientSecret': intent.client_secret})
         
         elif product_id:
-            # TERMÉK VÁSÁRLÁS KÁRTYÁVAL
             product = Product.query.get(int(product_id))
             if not product:
                 return jsonify({'error': 'Product not found'}), 404
             
-            # ⚠️ IDEIGLENESEN KIKAPCSOLVA a DailyStore ellenőrzések a 504 hiba elkerülése miatt
-            # TODO: Később visszakapcsolni, ha a DailyStore API stabil
-            # stock = check_dailystore_stock(product.sku)
-            # if stock <= 0:
-            #     return jsonify({
-            #         'error': f'Sorry, {product.name} is currently out of stock.',
-            #         'error_type': 'out_of_stock'
-            #     }), 404
+            # ASZINKRON ellenőrzések (nem blokkolják a Stripe hívást)
+            stock_ok = [True]
+            balance_ok = [True]
+            stock_value = [0]
+            balance_value = [0]
             
-            # ds_balance = check_dailystore_balance()
-            # if ds_balance < product.daily_store_price:
-            #     send_admin_alert("Low DailyStore Balance!", f"Need ${product.daily_store_price}, have ${ds_balance}")
-            #     return jsonify({
-            #         'error': 'Our store is currently restocking. Please try again later.',
-            #         'error_type': 'dailystore_balance'
-            #     }), 503
+            def stock_callback(stock):
+                stock_value[0] = stock
+                stock_ok[0] = stock > 0
             
+            def balance_callback(balance):
+                balance_value[0] = balance
+                balance_ok[0] = balance >= product.daily_store_price
+            
+            # Indítjuk az aszinkron ellenőrzéseket
+            threading.Thread(target=check_dailystore_stock_async, args=(product.sku, stock_callback)).start()
+            threading.Thread(target=check_dailystore_balance_async, args=(balance_callback,)).start()
+            
+            # Stripe PaymentIntent létrehozása (nem várjuk meg az ellenőrzéseket)
             intent = stripe.PaymentIntent.create(
                 amount=int(product.price * 100),
                 currency='usd',
@@ -319,6 +345,18 @@ def create_payment_intent():
                 },
                 automatic_payment_methods={'enabled': True}
             )
+            
+            # Ha az ellenőrzések gyorsak, naplózzuk az eredményt (nem blokkol)
+            def log_check_results():
+                import time
+                time.sleep(2)  # Várunk 2 másodpercet az ellenőrzésekre
+                if not stock_ok[0]:
+                    send_admin_alert("⚠️ Out of Stock Alert!", f"Product {product.name} (SKU: {product.sku}) is out of stock! Stock: {stock_value[0]}")
+                if not balance_ok[0]:
+                    send_admin_alert("⚠️ Low DailyStore Balance!", f"Balance: ${balance_value[0]:.2f}, Need: ${product.daily_store_price:.2f}")
+            
+            threading.Thread(target=log_check_results).start()
+            
             return jsonify({'clientSecret': intent.client_secret})
         
         return jsonify({'error': 'Invalid request'}), 400
@@ -340,7 +378,7 @@ def purchase_with_balance():
         if current_user.balance < product.price:
             return jsonify({'error': 'Insufficient balance'}), 400
         
-        # Stock ellenőrzés
+        # Stock ellenőrzés (szinkron, mert itt kell a válasz)
         stock = check_dailystore_stock(product.sku)
         if stock <= 0:
             return jsonify({
@@ -348,7 +386,7 @@ def purchase_with_balance():
                 'error_type': 'out_of_stock'
             }), 404
         
-        # Balance ellenőrzés
+        # Balance ellenőrzés (szinkron, mert itt kell a válasz)
         ds_balance = check_dailystore_balance()
         if ds_balance < product.daily_store_price:
             send_admin_alert("Low DailyStore Balance!", f"Need ${product.daily_store_price}, have ${ds_balance}")
