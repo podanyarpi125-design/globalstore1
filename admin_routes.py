@@ -122,6 +122,64 @@ def delete_product(product_id):
         return jsonify({'error': str(e)}), 500
 
 # ============================================================
+# BULK ADD PRODUCTS (ÚJ VÉGPONT!)
+# ============================================================
+@admin_bp.route('/products/bulk-add', methods=['POST'])
+@login_required
+def bulk_add_products():
+    if not current_user.is_admin:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        data = request.get_json()
+        products = data.get('products', [])
+        
+        added = 0
+        skipped = 0
+        errors = []
+        
+        for p in products:
+            sku = p.get('sku', '').strip()
+            name = p.get('name', '').strip()
+            price = float(p.get('price', 0))
+            daily_store_price = float(p.get('daily_store_price', price))
+            description = p.get('description', '')
+            category = p.get('category', '')
+            
+            if not sku or not name or price <= 0:
+                errors.append(f"Hiányzó adatok: {sku or 'ismeretlen'}")
+                continue
+            
+            existing = Product.query.filter_by(sku=sku).first()
+            if existing:
+                skipped += 1
+                continue
+            
+            new_product = Product(
+                sku=sku,
+                name=name,
+                description=description,
+                price=price,
+                daily_store_price=daily_store_price,
+                category=category,
+                is_active=True
+            )
+            db.session.add(new_product)
+            added += 1
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True, 
+            'added': added, 
+            'skipped': skipped,
+            'errors': errors if errors else None
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================
 # EGYÉB ADMIN VÉGPONTOK
 # ============================================================
 @admin_bp.route('/users')
