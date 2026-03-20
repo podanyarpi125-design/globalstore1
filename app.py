@@ -4,7 +4,6 @@ import json
 import requests
 import traceback
 import smtplib
-import re
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -22,11 +21,17 @@ from email_utils import send_purchase_email
 load_dotenv()
 
 # ============================================================
-# POSTGRESQL URL ÁTALAKÍTÁSA (DigitalOcean miatt)
+# ADATBÁZIS URL BEÁLLÍTÁSA (DigitalOcean PostgreSQL)
 # ============================================================
 DATABASE_URL = os.environ.get('DATABASE_URL')
 if DATABASE_URL and DATABASE_URL.startswith('postgres://'):
     DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+    print(f"✅ PostgreSQL database configured")
+elif DATABASE_URL:
+    print(f"✅ Database URL configured")
+else:
+    DATABASE_URL = 'sqlite:///globalstore.db'
+    print(f"⚠️ Using SQLite (local development)")
 
 # ============================================================
 # HIBANAplóZÁS
@@ -115,7 +120,7 @@ def check_dailystore_balance():
 # ============================================================
 app = Flask(__name__, template_folder='templates')
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'kulcs123')
-app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL or 'sqlite:///globalstore.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
@@ -152,12 +157,12 @@ with app.app_context():
             db.session.commit()
             print("✅ Admin: admin / admin123")
         
-        # Ellenőrizzük, van-e termék
         if Product.query.count() == 0:
-            print("⚠️ Nincsenek termékek! Használd az admin felületet a termékek feltöltéséhez.")
+            print("⚠️ Nincsenek termékek! Használd az admin felületet.")
         
     except Exception as e:
         log_error(f"Indítási hiba: {str(e)}")
+        print(f"❌ Adatbázis hiba: {e}")
 
 # ============================================================
 # PUBLIKUS VÉGPONTOK
@@ -245,7 +250,6 @@ def dashboard():
 # ============================================================
 @app.route('/api/products/<int:product_id>', methods=['GET'])
 def get_product_by_id(product_id):
-    """Termék adatainak lekérése ID alapján (admin szerkesztéshez)"""
     try:
         product = Product.query.get(product_id)
         if not product:
@@ -286,7 +290,6 @@ def create_payment_intent():
             if not product:
                 return jsonify({'error': 'Product not found'}), 404
             
-            # Stock ellenőrzés
             stock = check_dailystore_stock(product.sku)
             if stock <= 0:
                 return jsonify({
@@ -294,7 +297,6 @@ def create_payment_intent():
                     'error_type': 'out_of_stock'
                 }), 404
             
-            # Balance ellenőrzés
             ds_balance = check_dailystore_balance()
             if ds_balance < product.daily_store_price:
                 send_admin_alert("Low DailyStore Balance!", f"Need ${product.daily_store_price}, have ${ds_balance}")
@@ -335,7 +337,6 @@ def purchase_with_balance():
         if current_user.balance < product.price:
             return jsonify({'error': 'Insufficient balance'}), 400
         
-        # Stock ellenőrzés
         stock = check_dailystore_stock(product.sku)
         if stock <= 0:
             return jsonify({
@@ -343,7 +344,6 @@ def purchase_with_balance():
                 'error_type': 'out_of_stock'
             }), 404
         
-        # Balance ellenőrzés
         ds_balance = check_dailystore_balance()
         if ds_balance < product.daily_store_price:
             send_admin_alert("Low DailyStore Balance!", f"Need ${product.daily_store_price}, have ${ds_balance}")
@@ -352,7 +352,6 @@ def purchase_with_balance():
                 'error_type': 'dailystore_balance'
             }), 503
         
-        # Vásárlás a DailyStore-ból
         headers = {'Authorization': f'Bearer {DAILYSTORE_API_KEY}', 'Content-Type': 'application/json'}
         purchase_data = {'items': [{'sku': product.sku, 'quantity': 1}]}
         
@@ -373,7 +372,6 @@ def purchase_with_balance():
             if item.get('credentials'):
                 credentials.extend(item['credentials'])
         
-        # Levonás a felhasználótól
         current_user.balance -= product.price
         
         purchase = Purchase(
