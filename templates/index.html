@@ -205,9 +205,10 @@
     {% endif %}
 
     <script>
+        // A stripe_publishable_key a Flask-től jön
         const stripe = Stripe('{{ stripe_publishable_key }}');
         let elements = null, card = null, clientSecret = null;
-        let pendingPurchase = null;  // <- EZ TÁROLJA A VÁSÁRLÁS ADATAIT
+        let pendingPurchase = null;
 
         function showToast(message, type = 'error') {
             const toast = document.getElementById('toast-container');
@@ -225,9 +226,7 @@
             setTimeout(() => { toast.classList.add('hidden'); toast.classList.remove('flex'); }, 4000);
         }
 
-        // BALANCE ELLENŐRZÉS ÉS CONFIRM MODAL MEGNYITÁSA
         function checkBalanceAndBuy(productId, productName, productPrice, userBalance) {
-            // MENTJÜK EL A VÁSÁRLÁS ADATAIT!
             pendingPurchase = { productId, productName, productPrice };
             
             if (userBalance < productPrice) {
@@ -236,7 +235,6 @@
                 return false;
             }
             
-            // VAN ELÉG BALANCE - MEGMUTATJUK A CONFIRM MODALT
             const modal = document.getElementById('confirm-modal');
             document.getElementById('confirm-title').innerHTML = `<i class="fas fa-shopping-cart mr-2"></i> Buy ${productName}?`;
             document.getElementById('confirm-message').innerHTML = `Are you sure you want to purchase <strong>${productName}</strong> for <strong class="text-green-400">$${productPrice.toFixed(2)}</strong> using your balance?`;
@@ -246,7 +244,6 @@
 
         function closeConfirmModal() {
             document.getElementById('confirm-modal').classList.remove('active');
-            // NEM TÖRÖLJÜK A pendingPurchase-t, mert kell a confirmPurchase-nak!
         }
 
         async function confirmPurchase() {
@@ -287,11 +284,15 @@
             try {
                 showToast('Checking availability...', 'warning');
                 const res = await fetch('/api/create-payment-intent', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({product_id: productId})
                 });
                 const data = await res.json();
-                if (data.error) { showToast('⚠️ ' + data.error, 'warning'); return; }
+                if (data.error) { 
+                    showToast('⚠️ ' + data.error, 'warning'); 
+                    return; 
+                }
                 if (data.clientSecret) {
                     clientSecret = data.clientSecret;
                     document.getElementById('checkout-title').innerText = `Pay for ${productName}`;
@@ -299,31 +300,55 @@
                     setTimeout(() => {
                         if (elements) { if (card) card.unmount(); elements = null; }
                         elements = stripe.elements();
-                        card = elements.create('card', { style: { base: { color: '#fff', fontSize: '16px', '::placeholder': { color: '#94a3b8' } } } });
+                        card = elements.create('card', { 
+                            style: { 
+                                base: { 
+                                    color: '#fff', 
+                                    fontSize: '16px', 
+                                    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                                    '::placeholder': { color: '#94a3b8' }
+                                } 
+                            } 
+                        });
                         card.mount('#card-element');
-                        card.on('change', ({error}) => { document.getElementById('card-errors').textContent = error ? error.message : ''; });
+                        card.on('change', ({error}) => { 
+                            document.getElementById('card-errors').textContent = error ? error.message : ''; 
+                        });
                     }, 100);
                 }
-            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+            } catch (e) { 
+                showToast('Error: ' + e.message, 'error'); 
+            }
         }
 
         document.getElementById('payment-form').addEventListener('submit', async (e) => {
             e.preventDefault();
-            if (!clientSecret || !card) { showToast('Please wait, payment is initializing...', 'warning'); return; }
+            if (!clientSecret || !card) { 
+                showToast('Please wait, payment is initializing...', 'warning'); 
+                return; 
+            }
             const btn = document.getElementById('submit-button');
-            btn.disabled = true; btn.textContent = 'Processing...';
+            btn.disabled = true; 
+            btn.textContent = 'Processing...';
             const {error} = await stripe.confirmCardPayment(clientSecret, { payment_method: { card: card } });
             if (error) {
                 document.getElementById('card-errors').textContent = error.message;
-                btn.disabled = false; btn.textContent = 'Pay Now';
+                btn.disabled = false; 
+                btn.textContent = 'Pay Now';
                 showToast(error.message, 'error');
-            } else { showToast('✅ Payment successful!', 'success'); setTimeout(() => location.reload(), 1500); }
+            } else { 
+                showToast('✅ Payment successful!', 'success'); 
+                setTimeout(() => location.reload(), 1500); 
+            }
         });
 
         function closeCheckoutModal() {
             document.getElementById('checkout-modal').classList.remove('active');
-            if (card) { card.unmount(); card = null; } if (elements) elements = null; clientSecret = null;
+            if (card) { card.unmount(); card = null; } 
+            if (elements) elements = null; 
+            clientSecret = null;
         }
+        
         function openBalanceModal() { document.getElementById('balance-modal').classList.add('active'); }
         function closeBalanceModal() { document.getElementById('balance-modal').classList.remove('active'); }
 
@@ -331,7 +356,8 @@
             closeBalanceModal();
             try {
                 const res = await fetch('/api/create-payment-intent', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    method: 'POST', 
+                    headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({amount: amount})
                 });
                 const data = await res.json();
@@ -342,9 +368,19 @@
                     setTimeout(() => {
                         if (elements) { if (card) card.unmount(); elements = null; }
                         elements = stripe.elements();
-                        card = elements.create('card', { style: { base: { color: '#fff', fontSize: '16px', '::placeholder': { color: '#94a3b8' } } } });
+                        card = elements.create('card', { 
+                            style: { 
+                                base: { 
+                                    color: '#fff', 
+                                    fontSize: '16px', 
+                                    '::placeholder': { color: '#94a3b8' }
+                                } 
+                            } 
+                        });
                         card.mount('#card-element');
-                        card.on('change', ({error}) => { document.getElementById('card-errors').textContent = error ? error.message : ''; });
+                        card.on('change', ({error}) => { 
+                            document.getElementById('card-errors').textContent = error ? error.message : ''; 
+                        });
                     }, 100);
                 }
             } catch (e) { showToast('Error: ' + e.message, 'error'); }
@@ -356,7 +392,8 @@
         window.onclick = (e) => {
             if (e.target.classList.contains('modal')) {
                 e.target.classList.remove('active');
-                if (card) { card.unmount(); card = null; } clientSecret = null;
+                if (card) { card.unmount(); card = null; } 
+                clientSecret = null;
             }
             if (e.target.classList.contains('confirm-modal')) { closeConfirmModal(); }
         };
