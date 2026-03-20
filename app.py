@@ -4,6 +4,7 @@ import json
 import requests
 import traceback
 import smtplib
+import re
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -19,6 +20,13 @@ from app_routes import app_bp
 from email_utils import send_purchase_email
 
 load_dotenv()
+
+# ============================================================
+# POSTGRESQL URL ÁTALAKÍTÁSA (DigitalOcean miatt)
+# ============================================================
+DATABASE_URL = os.environ.get('DATABASE_URL')
+if DATABASE_URL and DATABASE_URL.startswith('postgres://'):
+    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
 
 # ============================================================
 # HIBANAplóZÁS
@@ -107,7 +115,7 @@ def check_dailystore_balance():
 # ============================================================
 app = Flask(__name__, template_folder='templates')
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'kulcs123')
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///globalstore.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL or 'sqlite:///globalstore.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
