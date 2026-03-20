@@ -87,12 +87,12 @@ def send_admin_alert(subject, message):
         return False
 
 # ============================================================
-# DAILYSTORE API FUNKCIÓK (TIMEOUT CSÖKKENTÉSSEL)
+# DAILYSTORE API FUNKCIÓK
 # ============================================================
 def check_dailystore_stock(sku):
     try:
         headers = {'Authorization': f'Bearer {DAILYSTORE_API_KEY}'}
-        response = requests.get(f'{DAILYSTORE_API_URL}/stock/{sku}', headers=headers, timeout=3)
+        response = requests.get(f'{DAILYSTORE_API_URL}/stock/{sku}', headers=headers, timeout=10)
         if response.status_code == 200:
             return response.json().get('stock', 0)
         return 999
@@ -102,7 +102,7 @@ def check_dailystore_stock(sku):
 def check_dailystore_balance():
     try:
         headers = {'Authorization': f'Bearer {DAILYSTORE_API_KEY}'}
-        response = requests.get(f'{DAILYSTORE_API_URL}/balance', headers=headers, timeout=3)
+        response = requests.get(f'{DAILYSTORE_API_URL}/balance', headers=headers, timeout=10)
         if response.status_code == 200:
             return response.json().get('balance', 0)
         return 999
@@ -291,22 +291,22 @@ def create_payment_intent():
             if not product:
                 return jsonify({'error': 'Product not found'}), 404
             
-            # Stock ellenőrzés (gyors timeout)
-            stock = check_dailystore_stock(product.sku)
-            if stock <= 0:
-                return jsonify({
-                    'error': f'Sorry, {product.name} is currently out of stock.',
-                    'error_type': 'out_of_stock'
-                }), 404
+            # ⚠️ IDEIGLENESEN KIKAPCSOLVA a DailyStore ellenőrzések a 504 hiba elkerülése miatt
+            # TODO: Később visszakapcsolni, ha a DailyStore API stabil
+            # stock = check_dailystore_stock(product.sku)
+            # if stock <= 0:
+            #     return jsonify({
+            #         'error': f'Sorry, {product.name} is currently out of stock.',
+            #         'error_type': 'out_of_stock'
+            #     }), 404
             
-            # Balance ellenőrzés (gyors timeout)
-            ds_balance = check_dailystore_balance()
-            if ds_balance < product.daily_store_price:
-                send_admin_alert("Low DailyStore Balance!", f"Need ${product.daily_store_price}, have ${ds_balance}")
-                return jsonify({
-                    'error': 'Our store is currently restocking. Please try again later.',
-                    'error_type': 'dailystore_balance'
-                }), 503
+            # ds_balance = check_dailystore_balance()
+            # if ds_balance < product.daily_store_price:
+            #     send_admin_alert("Low DailyStore Balance!", f"Need ${product.daily_store_price}, have ${ds_balance}")
+            #     return jsonify({
+            #         'error': 'Our store is currently restocking. Please try again later.',
+            #         'error_type': 'dailystore_balance'
+            #     }), 503
             
             intent = stripe.PaymentIntent.create(
                 amount=int(product.price * 100),
