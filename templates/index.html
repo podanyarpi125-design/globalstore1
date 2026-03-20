@@ -205,13 +205,11 @@
     {% endif %}
 
     <script>
-        // Stripe kulcs betöltése
         const stripePublishableKey = '{{ stripe_publishable_key }}';
         const stripe = Stripe(stripePublishableKey);
         let elements = null, card = null, clientSecret = null;
         let pendingPurchase = null;
 
-        // GLOBÁLIS függvények (hogy a gombok elérjék)
         window.buyCard = async function(productId, productName) {
             try {
                 showToast('Checking availability...', 'warning');

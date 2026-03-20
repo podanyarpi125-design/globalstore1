@@ -4,7 +4,6 @@ import json
 import requests
 import traceback
 import smtplib
-import re
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -88,21 +87,16 @@ def send_admin_alert(subject, message):
         return False
 
 # ============================================================
-# DAILYSTORE API FUNKCIÓK (TIMEOUT CSÖKKENTÉSSEL!)
+# DAILYSTORE API FUNKCIÓK (TIMEOUT CSÖKKENTÉSSEL)
 # ============================================================
 def check_dailystore_stock(sku):
     try:
         headers = {'Authorization': f'Bearer {DAILYSTORE_API_KEY}'}
-        # Timeout csökkentve 3 másodpercre, hogy ne lassítsa a Stripe hívást
         response = requests.get(f'{DAILYSTORE_API_URL}/stock/{sku}', headers=headers, timeout=3)
         if response.status_code == 200:
             return response.json().get('stock', 0)
         return 999
-    except requests.exceptions.Timeout:
-        print(f"⚠️ Stock check timeout for {sku}")
-        return 999
-    except Exception as e:
-        print(f"⚠️ Stock check error: {e}")
+    except:
         return 999
 
 def check_dailystore_balance():
@@ -111,9 +105,6 @@ def check_dailystore_balance():
         response = requests.get(f'{DAILYSTORE_API_URL}/balance', headers=headers, timeout=3)
         if response.status_code == 200:
             return response.json().get('balance', 0)
-        return 999
-    except requests.exceptions.Timeout:
-        print("⚠️ Balance check timeout")
         return 999
     except:
         return 999
@@ -174,7 +165,6 @@ def index():
     try:
         products = Product.query.filter_by(is_active=True).all()
         stripe_publishable_key = os.getenv('STRIPE_PUBLISHABLE_KEY')
-        print(f"🔑 Stripe publishable key: {stripe_publishable_key[:20] if stripe_publishable_key else 'MISSING'}...")
         return render_template('index.html', 
                              user=current_user, 
                              products=products, 
@@ -251,6 +241,11 @@ def dashboard():
 # ============================================================
 # API VÉGPONTOK
 # ============================================================
+@app.route('/api/test', methods=['GET'])
+def test():
+    """Teszt végpont a szerver ellenőrzéséhez"""
+    return jsonify({'status': 'ok', 'message': 'API is working'})
+
 @app.route('/api/products/<int:product_id>', methods=['GET'])
 def get_product_by_id(product_id):
     try:
@@ -272,12 +267,14 @@ def get_product_by_id(product_id):
 
 @app.route('/api/create-payment-intent', methods=['POST'])
 def create_payment_intent():
+    """Stripe PaymentIntent létrehozása (kártyás fizetés)"""
     try:
         data = request.get_json()
         amount = data.get('amount')
         product_id = data.get('product_id')
         
         if amount:
+            # Balance feltöltés
             if not current_user.is_authenticated:
                 return jsonify({'error': 'Login required'}), 401
             intent = stripe.PaymentIntent.create(
@@ -289,11 +286,12 @@ def create_payment_intent():
             return jsonify({'clientSecret': intent.client_secret})
         
         elif product_id:
+            # TERMÉK VÁSÁRLÁS KÁRTYÁVAL
             product = Product.query.get(int(product_id))
             if not product:
                 return jsonify({'error': 'Product not found'}), 404
             
-            # STOCK ELLENŐRZÉS (gyors timeout)
+            # Stock ellenőrzés (gyors timeout)
             stock = check_dailystore_stock(product.sku)
             if stock <= 0:
                 return jsonify({
@@ -301,7 +299,7 @@ def create_payment_intent():
                     'error_type': 'out_of_stock'
                 }), 404
             
-            # BALANCE ELLENŐRZÉS (gyors timeout)
+            # Balance ellenőrzés (gyors timeout)
             ds_balance = check_dailystore_balance()
             if ds_balance < product.daily_store_price:
                 send_admin_alert("Low DailyStore Balance!", f"Need ${product.daily_store_price}, have ${ds_balance}")
@@ -310,7 +308,6 @@ def create_payment_intent():
                     'error_type': 'dailystore_balance'
                 }), 503
             
-            # STRIPE PAYMENTINTENT (timeout növelve!)
             intent = stripe.PaymentIntent.create(
                 amount=int(product.price * 100),
                 currency='usd',
