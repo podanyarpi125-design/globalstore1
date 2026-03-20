@@ -87,7 +87,7 @@ def send_admin_alert(subject, message):
         return False
 
 # ============================================================
-# DAILYSTORE API FUNKCIÓK - 2 MÁSODPERC TIMEOUT (504 HIBA MEGOLDÁS)
+# DAILYSTORE API FUNKCIÓK - 2 MÁSODPERC TIMEOUT
 # ============================================================
 def check_dailystore_stock(sku):
     """Gyors stock ellenőrzés - 2 másodperc timeout"""
