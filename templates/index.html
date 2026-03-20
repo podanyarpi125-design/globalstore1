@@ -205,198 +205,204 @@
     {% endif %}
 
     <script>
-        // A stripe_publishable_key a Flask-től jön
-        const stripe = Stripe('{{ stripe_publishable_key }}');
-        let elements = null, card = null, clientSecret = null;
-        let pendingPurchase = null;
+        // Stripe kulcs betöltése a Flask-től
+        const stripePublishableKey = '{{ stripe_publishable_key }}';
+        
+        if (!stripePublishableKey || stripePublishableKey === 'None' || stripePublishableKey === '') {
+            console.error('❌ Stripe publishable key is missing! Check environment variables.');
+            // Fallback: ha nincs kulcs, mutassunk hibaüzenetet
+            function showToast(msg, type) { alert(msg); }
+            function buyCard() { alert('Payment system error. Please contact support.'); }
+            function topUp() { alert('Payment system error. Please contact support.'); }
+            function checkBalanceAndBuy() { alert('Payment system error. Please contact support.'); }
+            function openBalanceModal() {}
+            function closeBalanceModal() {}
+        } else {
+            console.log('✅ Stripe key loaded:', stripePublishableKey.substring(0, 20) + '...');
+            const stripe = Stripe(stripePublishableKey);
+            let elements = null, card = null, clientSecret = null;
+            let pendingPurchase = null;
 
-        function showToast(message, type = 'error') {
-            const toast = document.getElementById('toast-container');
-            const toastContent = document.getElementById('toast-content');
-            const toastIcon = document.getElementById('toast-icon');
-            const toastText = document.getElementById('toast-text');
-            toastContent.className = 'toast-content ' + type;
-            toastIcon.className = 'toast-icon ' + type;
-            if (type === 'error') toastIcon.innerHTML = '<i class="fas fa-exclamation-circle"></i>';
-            else if (type === 'warning') toastIcon.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
-            else toastIcon.innerHTML = '<i class="fas fa-check-circle"></i>';
-            toastText.innerHTML = message;
-            toast.classList.remove('hidden');
-            toast.classList.add('flex');
-            setTimeout(() => { toast.classList.add('hidden'); toast.classList.remove('flex'); }, 4000);
-        }
-
-        function checkBalanceAndBuy(productId, productName, productPrice, userBalance) {
-            pendingPurchase = { productId, productName, productPrice };
-            
-            if (userBalance < productPrice) {
-                showToast(`⚠️ Insufficient balance! Need $${productPrice.toFixed(2)} • Have $${userBalance.toFixed(2)}`, 'warning');
-                setTimeout(() => openBalanceModal(), 1500);
-                return false;
+            function showToast(message, type = 'error') {
+                const toast = document.getElementById('toast-container');
+                const toastContent = document.getElementById('toast-content');
+                const toastIcon = document.getElementById('toast-icon');
+                const toastText = document.getElementById('toast-text');
+                toastContent.className = 'toast-content ' + type;
+                toastIcon.className = 'toast-icon ' + type;
+                if (type === 'error') toastIcon.innerHTML = '<i class="fas fa-exclamation-circle"></i>';
+                else if (type === 'warning') toastIcon.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
+                else toastIcon.innerHTML = '<i class="fas fa-check-circle"></i>';
+                toastText.innerHTML = message;
+                toast.classList.remove('hidden');
+                toast.classList.add('flex');
+                setTimeout(() => { toast.classList.add('hidden'); toast.classList.remove('flex'); }, 4000);
             }
-            
-            const modal = document.getElementById('confirm-modal');
-            document.getElementById('confirm-title').innerHTML = `<i class="fas fa-shopping-cart mr-2"></i> Buy ${productName}?`;
-            document.getElementById('confirm-message').innerHTML = `Are you sure you want to purchase <strong>${productName}</strong> for <strong class="text-green-400">$${productPrice.toFixed(2)}</strong> using your balance?`;
-            modal.classList.add('active');
-            return true;
-        }
 
-        function closeConfirmModal() {
-            document.getElementById('confirm-modal').classList.remove('active');
-        }
-
-        async function confirmPurchase() {
-            if (!pendingPurchase) {
-                showToast('Error: No pending purchase', 'error');
-                return;
-            }
-            
-            closeConfirmModal();
-            
-            try {
-                const res = await fetch('/api/purchase/with-balance', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({product_id: pendingPurchase.productId})
-                });
-                const data = await res.json();
-                
-                if (data.success) {
-                    showToast('✅ Purchase successful! Credentials sent to email', 'success');
-                    setTimeout(() => location.reload(), 1500);
-                } else {
-                    if (data.error_type === 'out_of_stock') {
-                        showToast('⚠️ ' + data.error, 'warning');
-                    } else if (data.error_type === 'dailystore_balance') {
-                        showToast('⚠️ ' + data.error, 'warning');
-                        setTimeout(() => openBalanceModal(), 1500);
-                    } else {
-                        showToast('❌ ' + data.error, 'error');
-                    }
+            function checkBalanceAndBuy(productId, productName, productPrice, userBalance) {
+                pendingPurchase = { productId, productName, productPrice };
+                if (userBalance < productPrice) {
+                    showToast(`⚠️ Insufficient balance! Need $${productPrice.toFixed(2)} • Have $${userBalance.toFixed(2)}`, 'warning');
+                    setTimeout(() => openBalanceModal(), 1500);
+                    return false;
                 }
-            } catch (e) {
-                showToast('Error: ' + e.message, 'error');
+                const modal = document.getElementById('confirm-modal');
+                document.getElementById('confirm-title').innerHTML = `<i class="fas fa-shopping-cart mr-2"></i> Buy ${productName}?`;
+                document.getElementById('confirm-message').innerHTML = `Are you sure you want to purchase <strong>${productName}</strong> for <strong class="text-green-400">$${productPrice.toFixed(2)}</strong> using your balance?`;
+                modal.classList.add('active');
+                return true;
             }
-        }
 
-        async function buyCard(productId, productName) {
-            try {
-                showToast('Checking availability...', 'warning');
-                const res = await fetch('/api/create-payment-intent', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({product_id: productId})
-                });
-                const data = await res.json();
-                if (data.error) { 
-                    showToast('⚠️ ' + data.error, 'warning'); 
+            function closeConfirmModal() {
+                document.getElementById('confirm-modal').classList.remove('active');
+            }
+
+            async function confirmPurchase() {
+                if (!pendingPurchase) {
+                    showToast('Error: No pending purchase', 'error');
+                    return;
+                }
+                closeConfirmModal();
+                try {
+                    const res = await fetch('/api/purchase/with-balance', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({product_id: pendingPurchase.productId})
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        showToast('✅ Purchase successful! Credentials sent to email', 'success');
+                        setTimeout(() => location.reload(), 1500);
+                    } else {
+                        if (data.error_type === 'out_of_stock') {
+                            showToast('⚠️ ' + data.error, 'warning');
+                        } else if (data.error_type === 'dailystore_balance') {
+                            showToast('⚠️ ' + data.error, 'warning');
+                            setTimeout(() => openBalanceModal(), 1500);
+                        } else {
+                            showToast('❌ ' + data.error, 'error');
+                        }
+                    }
+                } catch (e) {
+                    showToast('Error: ' + e.message, 'error');
+                }
+            }
+
+            async function buyCard(productId, productName) {
+                try {
+                    showToast('Checking availability...', 'warning');
+                    const res = await fetch('/api/create-payment-intent', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({product_id: productId})
+                    });
+                    const data = await res.json();
+                    if (data.error) { 
+                        showToast('⚠️ ' + data.error, 'warning'); 
+                        return; 
+                    }
+                    if (data.clientSecret) {
+                        clientSecret = data.clientSecret;
+                        document.getElementById('checkout-title').innerText = `Pay for ${productName}`;
+                        document.getElementById('checkout-modal').classList.add('active');
+                        setTimeout(() => {
+                            if (elements) { if (card) card.unmount(); elements = null; }
+                            elements = stripe.elements();
+                            card = elements.create('card', { 
+                                style: { 
+                                    base: { 
+                                        color: '#fff', 
+                                        fontSize: '16px', 
+                                        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                                        '::placeholder': { color: '#94a3b8' }
+                                    } 
+                                } 
+                            });
+                            card.mount('#card-element');
+                            card.on('change', ({error}) => { 
+                                document.getElementById('card-errors').textContent = error ? error.message : ''; 
+                            });
+                        }, 100);
+                    }
+                } catch (e) { 
+                    showToast('Error: ' + e.message, 'error'); 
+                }
+            }
+
+            document.getElementById('payment-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                if (!clientSecret || !card) { 
+                    showToast('Please wait, payment is initializing...', 'warning'); 
                     return; 
                 }
-                if (data.clientSecret) {
-                    clientSecret = data.clientSecret;
-                    document.getElementById('checkout-title').innerText = `Pay for ${productName}`;
-                    document.getElementById('checkout-modal').classList.add('active');
-                    setTimeout(() => {
-                        if (elements) { if (card) card.unmount(); elements = null; }
-                        elements = stripe.elements();
-                        card = elements.create('card', { 
-                            style: { 
-                                base: { 
-                                    color: '#fff', 
-                                    fontSize: '16px', 
-                                    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-                                    '::placeholder': { color: '#94a3b8' }
-                                } 
-                            } 
-                        });
-                        card.mount('#card-element');
-                        card.on('change', ({error}) => { 
-                            document.getElementById('card-errors').textContent = error ? error.message : ''; 
-                        });
-                    }, 100);
+                const btn = document.getElementById('submit-button');
+                btn.disabled = true; 
+                btn.textContent = 'Processing...';
+                const {error} = await stripe.confirmCardPayment(clientSecret, { payment_method: { card: card } });
+                if (error) {
+                    document.getElementById('card-errors').textContent = error.message;
+                    btn.disabled = false; 
+                    btn.textContent = 'Pay Now';
+                    showToast(error.message, 'error');
+                } else { 
+                    showToast('✅ Payment successful!', 'success'); 
+                    setTimeout(() => location.reload(), 1500); 
                 }
-            } catch (e) { 
-                showToast('Error: ' + e.message, 'error'); 
-            }
-        }
+            });
 
-        document.getElementById('payment-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            if (!clientSecret || !card) { 
-                showToast('Please wait, payment is initializing...', 'warning'); 
-                return; 
-            }
-            const btn = document.getElementById('submit-button');
-            btn.disabled = true; 
-            btn.textContent = 'Processing...';
-            const {error} = await stripe.confirmCardPayment(clientSecret, { payment_method: { card: card } });
-            if (error) {
-                document.getElementById('card-errors').textContent = error.message;
-                btn.disabled = false; 
-                btn.textContent = 'Pay Now';
-                showToast(error.message, 'error');
-            } else { 
-                showToast('✅ Payment successful!', 'success'); 
-                setTimeout(() => location.reload(), 1500); 
-            }
-        });
-
-        function closeCheckoutModal() {
-            document.getElementById('checkout-modal').classList.remove('active');
-            if (card) { card.unmount(); card = null; } 
-            if (elements) elements = null; 
-            clientSecret = null;
-        }
-        
-        function openBalanceModal() { document.getElementById('balance-modal').classList.add('active'); }
-        function closeBalanceModal() { document.getElementById('balance-modal').classList.remove('active'); }
-
-        async function topUp(amount) {
-            closeBalanceModal();
-            try {
-                const res = await fetch('/api/create-payment-intent', {
-                    method: 'POST', 
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({amount: amount})
-                });
-                const data = await res.json();
-                if (data.clientSecret) {
-                    clientSecret = data.clientSecret;
-                    document.getElementById('checkout-title').innerText = `Top Up $${amount}`;
-                    document.getElementById('checkout-modal').classList.add('active');
-                    setTimeout(() => {
-                        if (elements) { if (card) card.unmount(); elements = null; }
-                        elements = stripe.elements();
-                        card = elements.create('card', { 
-                            style: { 
-                                base: { 
-                                    color: '#fff', 
-                                    fontSize: '16px', 
-                                    '::placeholder': { color: '#94a3b8' }
-                                } 
-                            } 
-                        });
-                        card.mount('#card-element');
-                        card.on('change', ({error}) => { 
-                            document.getElementById('card-errors').textContent = error ? error.message : ''; 
-                        });
-                    }, 100);
-                }
-            } catch (e) { showToast('Error: ' + e.message, 'error'); }
-        }
-
-        document.getElementById('confirm-cancel').onclick = closeConfirmModal;
-        document.getElementById('confirm-confirm').onclick = confirmPurchase;
-
-        window.onclick = (e) => {
-            if (e.target.classList.contains('modal')) {
-                e.target.classList.remove('active');
+            function closeCheckoutModal() {
+                document.getElementById('checkout-modal').classList.remove('active');
                 if (card) { card.unmount(); card = null; } 
+                if (elements) elements = null; 
                 clientSecret = null;
             }
-            if (e.target.classList.contains('confirm-modal')) { closeConfirmModal(); }
-        };
+            
+            function openBalanceModal() { document.getElementById('balance-modal').classList.add('active'); }
+            function closeBalanceModal() { document.getElementById('balance-modal').classList.remove('active'); }
+
+            async function topUp(amount) {
+                closeBalanceModal();
+                try {
+                    const res = await fetch('/api/create-payment-intent', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({amount: amount})
+                    });
+                    const data = await res.json();
+                    if (data.clientSecret) {
+                        clientSecret = data.clientSecret;
+                        document.getElementById('checkout-title').innerText = `Top Up $${amount}`;
+                        document.getElementById('checkout-modal').classList.add('active');
+                        setTimeout(() => {
+                            if (elements) { if (card) card.unmount(); elements = null; }
+                            elements = stripe.elements();
+                            card = elements.create('card', { 
+                                style: { 
+                                    base: { 
+                                        color: '#fff', 
+                                        fontSize: '16px', 
+                                        '::placeholder': { color: '#94a3b8' }
+                                    } 
+                                } 
+                            });
+                            card.mount('#card-element');
+                            card.on('change', ({error}) => { 
+                                document.getElementById('card-errors').textContent = error ? error.message : ''; 
+                            });
+                        }, 100);
+                    }
+                } catch (e) { showToast('Error: ' + e.message, 'error'); }
+            }
+
+            document.getElementById('confirm-cancel').onclick = closeConfirmModal;
+            document.getElementById('confirm-confirm').onclick = confirmPurchase;
+
+            window.onclick = (e) => {
+                if (e.target.classList.contains('modal')) {
+                    e.target.classList.remove('active');
+                    if (card) { card.unmount(); card = null; } 
+                    clientSecret = null;
+                }
+                if (e.target.classList.contains('confirm-modal')) { closeConfirmModal(); }
+            };
+        }
     </script>
 </body>
 </html>

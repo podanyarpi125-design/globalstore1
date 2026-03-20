@@ -150,7 +150,7 @@ with app.app_context():
             )
             db.session.add(admin)
             db.session.commit()
-            print("✅ Admin létrehozva: admin")
+            print("✅ Admin létrehozva: admin / GlobalStore2024AdminSecure")
         
         if Product.query.count() == 0:
             print("⚠️ Nincsenek termékek! Használd az admin felületet.")
@@ -166,6 +166,7 @@ def index():
     try:
         products = Product.query.filter_by(is_active=True).all()
         stripe_publishable_key = os.getenv('STRIPE_PUBLISHABLE_KEY')
+        print(f"🔑 Stripe publishable key: {stripe_publishable_key[:20] if stripe_publishable_key else 'MISSING'}...")
         return render_template('index.html', 
                              user=current_user, 
                              products=products, 
