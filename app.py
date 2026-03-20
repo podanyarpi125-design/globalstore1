@@ -4,7 +4,6 @@ import json
 import requests
 import traceback
 import smtplib
-import threading
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -88,13 +87,13 @@ def send_admin_alert(subject, message):
         return False
 
 # ============================================================
-# DAILYSTORE API FUNKCIÓK
+# DAILYSTORE API FUNKCIÓK - GYORS ELLENŐRZÉSEK (3 mp TIMEOUT)
 # ============================================================
 def check_dailystore_stock(sku):
-    """Szinkron stock ellenőrzés (visszaadja a stockot vagy 0-t)"""
+    """Gyors stock ellenőrzés - 3 másodperc timeout"""
     try:
         headers = {'Authorization': f'Bearer {DAILYSTORE_API_KEY}'}
-        response = requests.get(f'{DAILYSTORE_API_URL}/stock/{sku}', headers=headers, timeout=10)
+        response = requests.get(f'{DAILYSTORE_API_URL}/stock/{sku}', headers=headers, timeout=3)
         if response.status_code == 200:
             data = response.json()
             return data.get('stock', 0)
@@ -105,19 +104,22 @@ def check_dailystore_stock(sku):
             print(f"⚠️ Stock API hiba: {response.status_code}")
             return 0
     except requests.exceptions.Timeout:
-        print(f"⚠️ Stock timeout for {sku}")
+        print(f"⚠️ Stock timeout for {sku} - feltételezzük nincs készlet")
         return 0
     except Exception as e:
         print(f"⚠️ Stock error: {e}")
         return 0
 
 def check_dailystore_balance():
-    """Szinkron balance ellenőrzés"""
+    """Gyors balance ellenőrzés - 3 másodperc timeout"""
     try:
         headers = {'Authorization': f'Bearer {DAILYSTORE_API_KEY}'}
-        response = requests.get(f'{DAILYSTORE_API_URL}/balance', headers=headers, timeout=10)
+        response = requests.get(f'{DAILYSTORE_API_URL}/balance', headers=headers, timeout=3)
         if response.status_code == 200:
             return response.json().get('balance', 0)
+        return 0
+    except requests.exceptions.Timeout:
+        print("⚠️ Balance timeout - feltételezzük nincs elég egyenleg")
         return 0
     except:
         return 0
@@ -285,7 +287,7 @@ def get_product_by_id(product_id):
 
 @app.route('/api/create-payment-intent', methods=['POST'])
 def create_payment_intent():
-    """Stripe PaymentIntent létrehozása - TELJES HIBÁKEZELÉSSEL"""
+    """Stripe PaymentIntent létrehozása - GYORS ELLENŐRZÉSEKKEL, 504 HIBA NÉLKÜL"""
     try:
         data = request.get_json()
         amount = data.get('amount')
@@ -313,25 +315,22 @@ def create_payment_intent():
             if not product:
                 return jsonify({'error': 'Product not found'}), 404
             
-            # 1. STOCK ELLENŐRZÉS
+            # 1. GYORS STOCK ELLENŐRZÉS (3 mp timeout)
             stock = check_dailystore_stock(product.sku)
             if stock <= 0:
                 send_admin_alert("⚠️ OUT OF STOCK!", f"Product: {product.name} (SKU: {product.sku}) is OUT OF STOCK! Stock: {stock}")
                 return jsonify({
                     'error': f'Sorry, {product.name} is currently out of stock. Please check back later.',
-                    'error_type': 'out_of_stock',
-                    'stock': stock
+                    'error_type': 'out_of_stock'
                 }), 404
             
-            # 2. DAILYSTORE BALANCE ELLENŐRZÉS
+            # 2. GYORS DAILYSTORE BALANCE ELLENŐRZÉS (3 mp timeout)
             ds_balance = check_dailystore_balance()
             if ds_balance < product.daily_store_price:
                 send_admin_alert("⚠️ LOW DAILYSTORE BALANCE!", f"Balance: ${ds_balance:.2f}, Need: ${product.daily_store_price:.2f} for {product.name}")
                 return jsonify({
                     'error': 'Our store is currently restocking. Please try again later.',
-                    'error_type': 'dailystore_balance',
-                    'balance': ds_balance,
-                    'required': product.daily_store_price
+                    'error_type': 'dailystore_balance'
                 }), 503
             
             # 3. MINIMUM ÁR ELLENŐRZÉS (Stripe)
@@ -385,9 +384,7 @@ def purchase_with_balance():
         if current_user.balance < product.price:
             return jsonify({
                 'error': f'Insufficient balance. Need ${product.price:.2f}, have ${current_user.balance:.2f}',
-                'error_type': 'user_balance',
-                'required': product.price,
-                'current': current_user.balance
+                'error_type': 'user_balance'
             }), 400
         
         # 2. STOCK ELLENŐRZÉS
@@ -396,8 +393,7 @@ def purchase_with_balance():
             send_admin_alert("⚠️ OUT OF STOCK!", f"Product: {product.name} (SKU: {product.sku}) is OUT OF STOCK! Stock: {stock}")
             return jsonify({
                 'error': f'Sorry, {product.name} is currently out of stock. Your balance has not been charged.',
-                'error_type': 'out_of_stock',
-                'stock': stock
+                'error_type': 'out_of_stock'
             }), 404
         
         # 3. DAILYSTORE BALANCE ELLENŐRZÉS
@@ -451,7 +447,7 @@ def purchase_with_balance():
             if item.get('credentials'):
                 credentials.extend(item['credentials'])
         
-        # 5. LEVONÁS A FELHASZNÁLÓTÓL (CSAK HA SIKERES A VÁSÁRLÁS)
+        # 5. LEVONÁS A FELHASZNÁLÓTÓL
         current_user.balance -= product.price
         
         purchase = Purchase(
@@ -532,11 +528,10 @@ def webhook():
                     user = User.query.get(int(user_id))
                     
                     if product and user:
-                        # Még egyszer ellenőrizzük a stockot a vásárlás előtt
+                        # Még egyszer ellenőrizzük a stockot
                         stock = check_dailystore_stock(product.sku)
                         if stock <= 0:
                             send_admin_alert("⚠️ OUT OF STOCK!", f"Product {product.name} (SKU: {product.sku}) is out of stock after payment!")
-                            # Vissza kell adni a pénzt? Itt értesítjük az admint
                             return jsonify({'warning': 'Out of stock'}), 200
                         
                         headers = {'Authorization': f'Bearer {DAILYSTORE_API_KEY}', 'Content-Type': 'application/json'}
@@ -572,7 +567,6 @@ def webhook():
                             
                             print(f"✅ Kártyás vásárlás: {user.username} - {product.name}")
                         else:
-                            # Ha a vásárlás sikertelen, értesítjük az admint
                             send_admin_alert("⚠️ CARD PURCHASE FAILED!", 
                                 f"Payment succeeded but DailyStore purchase failed!\n"
                                 f"User: {user.username}\n"
