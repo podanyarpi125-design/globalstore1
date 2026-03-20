@@ -87,13 +87,13 @@ def send_admin_alert(subject, message):
         return False
 
 # ============================================================
-# DAILYSTORE API FUNKCIÓK - GYORS ELLENŐRZÉSEK (3 mp TIMEOUT)
+# DAILYSTORE API FUNKCIÓK - 2 MÁSODPERC TIMEOUT (504 HIBA MEGOLDÁS)
 # ============================================================
 def check_dailystore_stock(sku):
-    """Gyors stock ellenőrzés - 3 másodperc timeout"""
+    """Gyors stock ellenőrzés - 2 másodperc timeout"""
     try:
         headers = {'Authorization': f'Bearer {DAILYSTORE_API_KEY}'}
-        response = requests.get(f'{DAILYSTORE_API_URL}/stock/{sku}', headers=headers, timeout=3)
+        response = requests.get(f'{DAILYSTORE_API_URL}/stock/{sku}', headers=headers, timeout=2)
         if response.status_code == 200:
             data = response.json()
             return data.get('stock', 0)
@@ -104,22 +104,22 @@ def check_dailystore_stock(sku):
             print(f"⚠️ Stock API hiba: {response.status_code}")
             return 0
     except requests.exceptions.Timeout:
-        print(f"⚠️ Stock timeout for {sku} - feltételezzük nincs készlet")
+        print(f"⚠️ Stock timeout for {sku}")
         return 0
     except Exception as e:
         print(f"⚠️ Stock error: {e}")
         return 0
 
 def check_dailystore_balance():
-    """Gyors balance ellenőrzés - 3 másodperc timeout"""
+    """Gyors balance ellenőrzés - 2 másodperc timeout"""
     try:
         headers = {'Authorization': f'Bearer {DAILYSTORE_API_KEY}'}
-        response = requests.get(f'{DAILYSTORE_API_URL}/balance', headers=headers, timeout=3)
+        response = requests.get(f'{DAILYSTORE_API_URL}/balance', headers=headers, timeout=2)
         if response.status_code == 200:
             return response.json().get('balance', 0)
         return 0
     except requests.exceptions.Timeout:
-        print("⚠️ Balance timeout - feltételezzük nincs elég egyenleg")
+        print("⚠️ Balance timeout")
         return 0
     except:
         return 0
@@ -287,7 +287,7 @@ def get_product_by_id(product_id):
 
 @app.route('/api/create-payment-intent', methods=['POST'])
 def create_payment_intent():
-    """Stripe PaymentIntent létrehozása - GYORS ELLENŐRZÉSEKKEL, 504 HIBA NÉLKÜL"""
+    """Stripe PaymentIntent létrehozása - 2 MP TIMEOUT, 504 HIBA NÉLKÜL"""
     try:
         data = request.get_json()
         amount = data.get('amount')
@@ -315,7 +315,7 @@ def create_payment_intent():
             if not product:
                 return jsonify({'error': 'Product not found'}), 404
             
-            # 1. GYORS STOCK ELLENŐRZÉS (3 mp timeout)
+            # 1. GYORS STOCK ELLENŐRZÉS (2 mp timeout)
             stock = check_dailystore_stock(product.sku)
             if stock <= 0:
                 send_admin_alert("⚠️ OUT OF STOCK!", f"Product: {product.name} (SKU: {product.sku}) is OUT OF STOCK! Stock: {stock}")
@@ -324,7 +324,7 @@ def create_payment_intent():
                     'error_type': 'out_of_stock'
                 }), 404
             
-            # 2. GYORS DAILYSTORE BALANCE ELLENŐRZÉS (3 mp timeout)
+            # 2. GYORS DAILYSTORE BALANCE ELLENŐRZÉS (2 mp timeout)
             ds_balance = check_dailystore_balance()
             if ds_balance < product.daily_store_price:
                 send_admin_alert("⚠️ LOW DAILYSTORE BALANCE!", f"Balance: ${ds_balance:.2f}, Need: ${product.daily_store_price:.2f} for {product.name}")
@@ -340,7 +340,7 @@ def create_payment_intent():
                     'error_type': 'min_amount'
                 }), 400
             
-            # 4. STRIPE PAYMENTINTENT LÉTREHOZÁSA
+            # 4. STRIPE PAYMENTINTENT LÉTREHOZÁSA (gyors)
             intent = stripe.PaymentIntent.create(
                 amount=int(product.price * 100),
                 currency='usd',
