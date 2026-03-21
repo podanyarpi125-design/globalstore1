@@ -238,19 +238,29 @@
                 const data = await res.json();
                 
                 if (data.error) {
-                    if (data.error_type === 'out_of_stock') {
+                    // MINDEN HIBA TÍPUS KEZELÉSE
+                    const errorType = data.error_type;
+                    
+                    if (errorType === 'out_of_stock') {
                         showToast('⚠️ ' + data.error, 'warning');
-                    } else if (data.error_type === 'insufficient_dailystore_balance') {
+                    } 
+                    else if (errorType === 'insufficient_dailystore_balance') {
+                        // EZ VOLT A HIÁNYZÓ! 
                         showToast(`⚠️ ${data.error}`, 'warning');
-                    } else if (data.error_type === 'dailystore_balance') {
+                    }
+                    else if (errorType === 'dailystore_balance') {
                         showToast('⚠️ ' + data.error, 'warning');
-                    } else if (data.error_type === 'min_amount') {
+                    }
+                    else if (errorType === 'min_amount') {
                         showToast('⚠️ ' + data.error, 'warning');
-                    } else if (data.error_type === 'balance_check_failed') {
+                    }
+                    else if (errorType === 'balance_check_failed') {
                         showToast('⚠️ ' + data.error, 'warning');
-                    } else if (data.error_type === 'stock_check_failed') {
+                    }
+                    else if (errorType === 'stock_check_failed') {
                         showToast('⚠️ ' + data.error, 'warning');
-                    } else {
+                    }
+                    else {
                         showToast('❌ ' + data.error, 'error');
                     }
                     return;
@@ -369,13 +379,15 @@
                     showToast('✅ Purchase successful! Credentials sent to email', 'success');
                     setTimeout(() => location.reload(), 1500);
                 } else {
-                    if (data.error_type === 'out_of_stock') {
+                    const errorType = data.error_type;
+                    
+                    if (errorType === 'out_of_stock') {
                         showToast('⚠️ ' + data.error, 'warning');
-                    } else if (data.error_type === 'insufficient_dailystore_balance') {
+                    } else if (errorType === 'insufficient_dailystore_balance') {
                         showToast('⚠️ ' + data.error, 'warning');
-                    } else if (data.error_type === 'dailystore_balance') {
+                    } else if (errorType === 'dailystore_balance') {
                         showToast('⚠️ ' + data.error, 'warning');
-                    } else if (data.error_type === 'user_balance') {
+                    } else if (errorType === 'user_balance') {
                         showToast('⚠️ ' + data.error, 'warning');
                         setTimeout(() => openBalanceModal(), 1500);
                     } else {
