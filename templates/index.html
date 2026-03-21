@@ -223,7 +223,7 @@
             toastText.innerHTML = message;
             toast.classList.remove('hidden');
             toast.classList.add('flex');
-            setTimeout(() => { toast.classList.add('hidden'); toast.classList.remove('flex'); }, 5000);
+            setTimeout(() => { toast.classList.add('hidden'); toast.classList.remove('flex'); }, 4000);
         }
 
         window.buyCard = async function(productId, productName) {
@@ -246,18 +246,9 @@
                     else if (errorType === 'insufficient_dailystore_balance') {
                         const required = data.required || 'unknown';
                         const available = data.available || 'unknown';
-                        showToast(`⚠️ Insufficient store balance! Required: $${required}, Available: $${available}. Please contact support.`, 'warning');
-                    }
-                    else if (errorType === 'dailystore_balance') {
-                        showToast('⚠️ ' + data.error, 'warning');
+                        showToast(`⚠️ Insufficient store balance! Required: $${required}, Available: $${available}.`, 'warning');
                     }
                     else if (errorType === 'min_amount') {
-                        showToast('⚠️ ' + data.error, 'warning');
-                    }
-                    else if (errorType === 'balance_check_failed') {
-                        showToast('⚠️ ' + data.error, 'warning');
-                    }
-                    else if (errorType === 'stock_check_failed') {
                         showToast('⚠️ ' + data.error, 'warning');
                     }
                     else {
@@ -387,8 +378,6 @@
                         const required = data.required || 'unknown';
                         const available = data.available || 'unknown';
                         showToast(`⚠️ Insufficient store balance! Required: $${required}, Available: $${available}.`, 'warning');
-                    } else if (errorType === 'dailystore_balance') {
-                        showToast('⚠️ ' + data.error, 'warning');
                     } else if (errorType === 'user_balance') {
                         showToast('⚠️ ' + data.error, 'warning');
                         setTimeout(() => openBalanceModal(), 1500);
