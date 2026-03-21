@@ -4,6 +4,3 @@ __pycache__/
 error_log.txt
 instance/
 *.db
-.DS_Store
-*.swp
-*.swo
