@@ -1,5 +1,7 @@
-.env
 __pycache__/
 *.pyc
+.env
 error_log.txt
 instance/
+*.db
+.DS_Store

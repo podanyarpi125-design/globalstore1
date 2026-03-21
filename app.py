@@ -12,6 +12,8 @@ from flask import Flask, jsonify, request, render_template, redirect, url_for, f
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 import stripe
+from sqlalchemy import update, select
+from sqlalchemy.exc import SQLAlchemyError
 
 from models import db, User, Product, Purchase, Transaction
 from admin_routes import admin_bp
@@ -52,7 +54,6 @@ def send_admin_alert(subject, message):
         GMAIL_APP_PASSWORD = os.getenv('GMAIL_APP_PASSWORD')
         
         if not GMAIL_EMAIL or not GMAIL_APP_PASSWORD:
-            print("⚠️ Gmail nincs beállítva")
             return False
         
         msg = MIMEMultipart('alternative')
@@ -88,27 +89,80 @@ def send_admin_alert(subject, message):
         return False
 
 # ============================================================
-# DAILYSTORE API FUNKCIÓK
+# DAILYSTORE API FUNKCIÓK - RACE CONDITION MENTES
 # ============================================================
 def check_dailystore_stock(sku):
+    """Stock ellenőrzés - timeout esetén None"""
     try:
         headers = {'Authorization': f'Bearer {DAILYSTORE_API_KEY}'}
         response = requests.get(f'{DAILYSTORE_API_URL}/stock/{sku}', headers=headers, timeout=5)
         if response.status_code == 200:
             return response.json().get('stock', 0)
-        return 0
+        return None
     except:
-        return 0
+        return None
 
 def check_dailystore_balance():
+    """Balance ellenőrzés - timeout esetén None (nem blokkol)"""
     try:
         headers = {'Authorization': f'Bearer {DAILYSTORE_API_KEY}'}
         response = requests.get(f'{DAILYSTORE_API_URL}/balance', headers=headers, timeout=5)
         if response.status_code == 200:
             return response.json().get('balance', 0)
-        return 0
+        return None
     except:
-        return 0
+        return None
+
+# ============================================================
+# ATOMIC BALANCE UPDATE (RACE CONDITION MENTES!)
+# ============================================================
+def deduct_user_balance(user_id, amount):
+    """Atomic balance csökkentés - SQL szintű lock"""
+    try:
+        result = db.session.execute(
+            update(User)
+            .where(User.id == user_id, User.balance >= amount)
+            .values(balance=User.balance - amount)
+        )
+        db.session.commit()
+        return result.rowcount > 0
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        log_error(f"Balance deduct error: {e}")
+        return False
+
+def add_user_balance(user_id, amount):
+    """Atomic balance növelés"""
+    try:
+        db.session.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(balance=User.balance + amount)
+        )
+        db.session.commit()
+        return True
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        log_error(f"Balance add error: {e}")
+        return False
+
+# ============================================================
+# ATOMIC STOCK UPDATE (RACE CONDITION MENTES!)
+# ============================================================
+def deduct_product_stock(product_id, quantity=1):
+    """Atomic stock csökkentés - csak ha van elég"""
+    try:
+        result = db.session.execute(
+            update(Product)
+            .where(Product.id == product_id, Product.stock >= quantity)
+            .values(stock=Product.stock - quantity)
+        )
+        db.session.commit()
+        return result.rowcount > 0
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        log_error(f"Stock deduct error: {e}")
+        return False
 
 # ============================================================
 # FLASK ALKALMAZÁS
@@ -270,6 +324,7 @@ def get_product_by_id(product_id):
 
 @app.route('/api/create-payment-intent', methods=['POST'])
 def create_payment_intent():
+    """Stripe PaymentIntent létrehozása - RACE CONDITION MENTES"""
     try:
         data = request.get_json()
         amount = data.get('amount')
@@ -280,6 +335,7 @@ def create_payment_intent():
                 return jsonify({'error': 'Login required'}), 401
             if amount < 0.5:
                 return jsonify({'error': 'Minimum top up amount is $0.50'}), 400
+            
             intent = stripe.PaymentIntent.create(
                 amount=int(amount * 100),
                 currency='usd',
@@ -293,17 +349,20 @@ def create_payment_intent():
             if not product:
                 return jsonify({'error': 'Product not found'}), 404
             
+            # 1. STOCK ELLENŐRZÉS (nem blokkol, csak ellenőriz)
             stock = check_dailystore_stock(product.sku)
-            if stock <= 0:
+            if stock == 0:
                 send_admin_alert("⚠️ OUT OF STOCK!", f"Product: {product.name} (SKU: {product.sku}) is OUT OF STOCK!")
                 return jsonify({
                     'error': f'Sorry, {product.name} is currently out of stock.',
                     'error_type': 'out_of_stock'
                 }), 404
             
+            # 2. BALANCE ELLENŐRZÉS - ha None, akkor engedjük (race condition miatt)
             ds_balance = check_dailystore_balance()
-            if ds_balance < product.daily_store_price:
-                send_admin_alert("⚠️ LOW DAILYSTORE BALANCE!", f"Balance: ${ds_balance:.2f}, Need: ${product.daily_store_price:.2f}")
+            if ds_balance is not None and ds_balance < product.daily_store_price:
+                send_admin_alert("⚠️ LOW DAILYSTORE BALANCE!", 
+                    f"Balance: ${ds_balance:.2f}, Need: ${product.daily_store_price:.2f}")
                 return jsonify({
                     'error': f'Insufficient store balance. Required: ${product.daily_store_price:.2f}, Available: ${ds_balance:.2f}',
                     'error_type': 'insufficient_dailystore_balance',
@@ -311,12 +370,14 @@ def create_payment_intent():
                     'available': ds_balance
                 }), 503
             
+            # 3. MINIMUM ÁR ELLENŐRZÉS
             if product.price < 0.5:
                 return jsonify({
                     'error': f'Minimum payment amount is $0.50. {product.name} price is ${product.price:.2f}.',
                     'error_type': 'min_amount'
                 }), 400
             
+            # 4. STRIPE PAYMENTINTENT
             intent = stripe.PaymentIntent.create(
                 amount=int(product.price * 100),
                 currency='usd',
@@ -345,6 +406,7 @@ def create_payment_intent():
 @app.route('/api/purchase/with-balance', methods=['POST'])
 @login_required
 def purchase_with_balance():
+    """Vásárlás balance-ból - ATOMIC UPDATE + RACE CONDITION MENTES!"""
     try:
         data = request.get_json()
         product_id = data.get('product_id')
@@ -353,30 +415,39 @@ def purchase_with_balance():
         if not product:
             return jsonify({'error': 'Product not found'}), 404
         
-        if current_user.balance < product.price:
+        # 1. ATOMIC BALANCE LEVONÁS (SQL LOCK!)
+        if not deduct_user_balance(current_user.id, product.price):
             return jsonify({
                 'error': f'Insufficient balance. Need ${product.price:.2f}, have ${current_user.balance:.2f}',
                 'error_type': 'user_balance'
             }), 400
         
+        # 2. STOCK ELLENŐRZÉS
         stock = check_dailystore_stock(product.sku)
-        if stock <= 0:
+        if stock == 0:
             send_admin_alert("⚠️ OUT OF STOCK!", f"Product: {product.name} (SKU: {product.sku}) is OUT OF STOCK!")
+            # Visszaadjuk a balance-t!
+            add_user_balance(current_user.id, product.price)
             return jsonify({
-                'error': f'Sorry, {product.name} is currently out of stock.',
+                'error': f'Sorry, {product.name} is currently out of stock. Your balance has been refunded.',
                 'error_type': 'out_of_stock'
             }), 404
         
+        # 3. DAILYSTORE BALANCE ELLENŐRZÉS
         ds_balance = check_dailystore_balance()
-        if ds_balance < product.daily_store_price:
-            send_admin_alert("⚠️ LOW DAILYSTORE BALANCE!", f"Balance: ${ds_balance:.2f}, Need: ${product.daily_store_price:.2f}")
+        if ds_balance is not None and ds_balance < product.daily_store_price:
+            send_admin_alert("⚠️ LOW DAILYSTORE BALANCE!", 
+                f"Balance: ${ds_balance:.2f}, Need: ${product.daily_store_price:.2f}")
+            # Visszaadjuk a balance-t!
+            add_user_balance(current_user.id, product.price)
             return jsonify({
-                'error': f'Insufficient store balance. Required: ${product.daily_store_price:.2f}, Available: ${ds_balance:.2f}',
+                'error': f'Insufficient store balance. Required: ${product.daily_store_price:.2f}, Available: ${ds_balance:.2f}. Your balance has been refunded.',
                 'error_type': 'insufficient_dailystore_balance',
                 'required': product.daily_store_price,
                 'available': ds_balance
             }), 503
         
+        # 4. VÁSÁRLÁS A DAILYSTORE-BÓL
         headers = {'Authorization': f'Bearer {DAILYSTORE_API_KEY}', 'Content-Type': 'application/json'}
         purchase_data = {'items': [{'sku': product.sku, 'quantity': 1}]}
         
@@ -388,8 +459,10 @@ def purchase_with_balance():
                 timeout=10
             )
         except requests.exceptions.Timeout:
-            return jsonify({'error': 'DailyStore timeout. Please try again.'}), 504
+            add_user_balance(current_user.id, product.price)
+            return jsonify({'error': 'DailyStore timeout. Your balance has been refunded.'}), 504
         except requests.exceptions.ConnectionError:
+            add_user_balance(current_user.id, product.price)
             return jsonify({'error': 'Cannot connect to DailyStore. Please try again later.'}), 503
         
         if ds_response.status_code != 201:
@@ -397,20 +470,23 @@ def purchase_with_balance():
             error_msg = error_data.get('message', 'Unknown error')
             error_code = error_data.get('error', '')
             
+            # Visszaadjuk a balance-t!
+            add_user_balance(current_user.id, product.price)
+            
             if error_code == 'PRODUCT_UNAVAILABLE' or 'stock' in error_msg.lower():
                 send_admin_alert("⚠️ OUT OF STOCK!", f"Product {product.name} (SKU: {product.sku}) is out of stock during purchase!")
                 return jsonify({
-                    'error': f'Sorry, {product.name} is out of stock.',
+                    'error': f'Sorry, {product.name} is out of stock. Your balance has been refunded.',
                     'error_type': 'out_of_stock'
                 }), 404
             elif error_code == 'INSUFFICIENT_BALANCE':
                 send_admin_alert("⚠️ LOW DAILYSTORE BALANCE!", f"Balance insufficient during purchase!")
                 return jsonify({
-                    'error': 'System maintenance. Please try again later.',
+                    'error': 'System maintenance. Please try again later. Your balance has been refunded.',
                     'error_type': 'dailystore_balance'
                 }), 503
             else:
-                return jsonify({'error': f'DailyStore error: {error_msg}'}), 500
+                return jsonify({'error': f'DailyStore error: {error_msg}. Your balance has been refunded.'}), 500
         
         ds_result = ds_response.json()
         credentials = []
@@ -418,8 +494,7 @@ def purchase_with_balance():
             if item.get('credentials'):
                 credentials.extend(item['credentials'])
         
-        current_user.balance -= product.price
-        
+        # 5. VÁSÁRLÁS RÖGZÍTÉSE (balance már levonva)
         purchase = Purchase(
             user_id=current_user.id,
             product_id=product.id,
@@ -438,15 +513,20 @@ def purchase_with_balance():
         db.session.add(transaction)
         db.session.commit()
         
+        # 6. EMAIL A FELHASZNÁLÓNAK
         if '@' in current_user.username:
             send_purchase_email(current_user.username, product.name, credentials)
         
-        if stock > 0 and stock <= 5:
+        # 7. ALACSONY STOCK FIGYELMEZTETÉS
+        if stock is not None and stock > 0 and stock <= 5:
             send_admin_alert("📦 Low Stock Alert!", f"Product: {product.name} (SKU: {product.sku})\nRemaining stock: {stock - 1}")
+        
+        # 8. FRISS BALANCE LEKÉRÉS (visszaadjuk a felhasználónak)
+        updated_user = User.query.get(current_user.id)
         
         return jsonify({
             'success': True, 
-            'new_balance': current_user.balance, 
+            'new_balance': updated_user.balance, 
             'credentials': credentials,
             'message': f'Sikeres vásárlás: {product.name}'
         })
@@ -473,12 +553,11 @@ def webhook():
             metadata = intent.get('metadata', {})
             
             if metadata.get('type') == 'topup':
-                user = User.query.get(int(metadata['user_id']))
-                if user:
+                user_id = int(metadata.get('user_id'))
+                if user_id:
                     amount = intent['amount'] / 100
-                    user.balance += amount
-                    db.session.commit()
-                    print(f"✅ {user.username} +${amount}")
+                    add_user_balance(user_id, amount)
+                    print(f"✅ User {user_id} +${amount}")
             
             elif metadata.get('type') == 'purchase':
                 product_id = metadata.get('product_id')
@@ -489,6 +568,13 @@ def webhook():
                     user = User.query.get(int(user_id))
                     
                     if product and user:
+                        # Még egyszer ellenőrizzük a stockot (atomic)
+                        stock = check_dailystore_stock(product.sku)
+                        if stock == 0:
+                            send_admin_alert("⚠️ OUT OF STOCK!", f"Product {product.name} (SKU: {product.sku}) is out of stock after payment!")
+                            # Itt nem tudjuk visszaadni a pénzt automatikusan, admin intézkedés kell
+                            return jsonify({'warning': 'Out of stock'}), 200
+                        
                         headers = {'Authorization': f'Bearer {DAILYSTORE_API_KEY}', 'Content-Type': 'application/json'}
                         purchase_data = {'items': [{'sku': product.sku, 'quantity': 1}]}
                         
@@ -555,16 +641,16 @@ def admin_send_balance():
             return jsonify({'error': 'User not found'}), 404
         
         if action == 'add':
-            target_user.balance += amount
+            if add_user_balance(target_user.id, amount):
+                return jsonify({'success': True, 'new_balance': target_user.balance})
+            return jsonify({'error': 'Failed to add balance'}), 500
         elif action == 'remove':
-            if target_user.balance < amount:
-                return jsonify({'error': 'Insufficient balance'}), 400
-            target_user.balance -= amount
+            if deduct_user_balance(target_user.id, amount):
+                return jsonify({'success': True, 'new_balance': target_user.balance})
+            return jsonify({'error': 'Insufficient balance or error'}), 400
         else:
             return jsonify({'error': 'Invalid action'}), 400
         
-        db.session.commit()
-        return jsonify({'success': True, 'new_balance': target_user.balance})
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
