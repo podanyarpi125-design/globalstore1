@@ -88,21 +88,19 @@ def send_admin_alert(subject, message):
         return False
 
 # ============================================================
-# DAILYSTORE API FUNKCIÓK - 3 MP TIMEOUT
+# DAILYSTORE API FUNKCIÓK - 5 MÁSODPERC TIMEOUT
 # ============================================================
 def check_dailystore_stock(sku):
-    """Stock ellenőrzés - 3 mp timeout"""
+    """Stock ellenőrzés - 5 mp timeout"""
     try:
         headers = {'Authorization': f'Bearer {DAILYSTORE_API_KEY}'}
-        response = requests.get(f'{DAILYSTORE_API_URL}/stock/{sku}', headers=headers, timeout=3)
+        response = requests.get(f'{DAILYSTORE_API_URL}/stock/{sku}', headers=headers, timeout=5)
         if response.status_code == 200:
             data = response.json()
             return data.get('stock', 0)
         elif response.status_code == 404:
-            print(f"⚠️ Termék nem található: {sku}")
             return 0
         else:
-            print(f"⚠️ Stock API hiba: {response.status_code}")
             return 0
     except requests.exceptions.Timeout:
         print(f"⚠️ Stock timeout for {sku}")
@@ -112,10 +110,10 @@ def check_dailystore_stock(sku):
         return 0
 
 def check_dailystore_balance():
-    """Balance ellenőrzés - 3 mp timeout"""
+    """Balance ellenőrzés - 5 mp timeout"""
     try:
         headers = {'Authorization': f'Bearer {DAILYSTORE_API_KEY}'}
-        response = requests.get(f'{DAILYSTORE_API_URL}/balance', headers=headers, timeout=3)
+        response = requests.get(f'{DAILYSTORE_API_URL}/balance', headers=headers, timeout=5)
         if response.status_code == 200:
             data = response.json()
             return data.get('balance', 0)
@@ -171,9 +169,7 @@ with app.app_context():
         # Frissítsd a 50 cent alatti termékek árát
         low_price_products = Product.query.filter(Product.price < 0.5).all()
         for p in low_price_products:
-            old_price = p.price
             p.price = 0.5
-            print(f"⚠️ {p.name} ára {old_price} -> 0.50 (Stripe minimum)")
         if low_price_products:
             db.session.commit()
         
@@ -209,7 +205,7 @@ def login():
                 if user.is_admin:
                     return redirect(url_for('admin_bp.admin_dashboard'))
                 return redirect(url_for('index'))
-            flash('Hibás adatok', 'error')
+            flash('Hibás felhasználónév vagy jelszó', 'error')
         return render_template('login.html')
     except Exception as e:
         log_error(f"Login hiba: {str(e)}")
@@ -224,7 +220,7 @@ def register():
             discord_id = request.form.get('discord_id')
             
             if User.query.filter_by(username=username).first():
-                flash('Foglalt név', 'error')
+                flash('A felhasználónév már foglalt', 'error')
                 return redirect(url_for('register'))
             
             new_user = User(
@@ -289,7 +285,7 @@ def get_product_by_id(product_id):
 
 @app.route('/api/create-payment-intent', methods=['POST'])
 def create_payment_intent():
-    """Stripe PaymentIntent létrehozása - PONTOS BALANCE ELLENŐRZÉSSEL"""
+    """Stripe PaymentIntent létrehozása - TELJES HIBAKEZELÉS"""
     try:
         data = request.get_json()
         amount = data.get('amount')
@@ -312,6 +308,7 @@ def create_payment_intent():
             return jsonify({'clientSecret': intent.client_secret})
         
         elif product_id:
+            # TERMÉK VÁSÁRLÁS KÁRTYÁVAL
             product = Product.query.get(int(product_id))
             if not product:
                 return jsonify({'error': 'Product not found'}), 404
@@ -330,7 +327,6 @@ def create_payment_intent():
             
             # Ha nem tudtuk lekérni a balance-t
             if ds_balance == 0:
-                # Timeout vagy hiba esetén is engedjük? Itt nem engedjük, mert nem biztonságos
                 send_admin_alert("⚠️ BALANCE CHECK FAILED!", f"Could not verify balance for {product.name}")
                 return jsonify({
                     'error': 'Cannot verify store balance. Please try again later.',
@@ -387,7 +383,7 @@ def create_payment_intent():
 @app.route('/api/purchase/with-balance', methods=['POST'])
 @login_required
 def purchase_with_balance():
-    """Vásárlás balance-ból"""
+    """Vásárlás balance-ból - TELJES HIBAKEZELÉS"""
     try:
         data = request.get_json()
         product_id = data.get('product_id')
