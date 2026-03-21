@@ -13,6 +13,12 @@ class User(UserMixin, db.Model):
     discord_id = db.Column(db.String(50), nullable=True)
     is_admin = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    purchases = db.relationship('Purchase', backref='user', lazy=True)
+    transactions = db.relationship('Transaction', backref='user', lazy=True)
+    
+    def __repr__(self):
+        return f'<User {self.username}>'
 
 class Product(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -23,16 +29,27 @@ class Product(db.Model):
     daily_store_price = db.Column(db.Float, nullable=False)
     category = db.Column(db.String(100))
     is_active = db.Column(db.Boolean, default=True)
+    
+    def __repr__(self):
+        return f'<Product {self.name}>'
 
 class Purchase(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
     product = db.relationship('Product')
+    user = db.relationship('User')  # EZ A HIÁNYZÓ KAPCSOLAT!
+    
+    quantity = db.Column(db.Integer, default=1)
     price_paid = db.Column(db.Float, nullable=False)
     daily_store_order_id = db.Column(db.String(100), nullable=True)
     credentials = db.Column(db.Text, nullable=True)
+    payment_method = db.Column(db.String(50))
+    status = db.Column(db.String(50), default='completed')
     purchased_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def __repr__(self):
+        return f'<Purchase {self.id} by User {self.user_id}>'
 
 class Transaction(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -42,3 +59,6 @@ class Transaction(db.Model):
     description = db.Column(db.String(200))
     stripe_payment_id = db.Column(db.String(100), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def __repr__(self):
+        return f'<Transaction {self.id}: {self.amount}>'

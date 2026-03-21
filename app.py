@@ -110,19 +110,20 @@ def check_dailystore_stock(sku):
         return 0
 
 def check_dailystore_balance():
-    """Balance ellenőrzés - 5 mp timeout"""
+    """Balance ellenőrzés - 5 mp timeout, hiba esetén None-t ad"""
     try:
         headers = {'Authorization': f'Bearer {DAILYSTORE_API_KEY}'}
         response = requests.get(f'{DAILYSTORE_API_URL}/balance', headers=headers, timeout=5)
         if response.status_code == 200:
             data = response.json()
             return data.get('balance', 0)
-        return 0
+        return None
     except requests.exceptions.Timeout:
         print("⚠️ Balance timeout")
-        return 0
-    except:
-        return 0
+        return None
+    except Exception as e:
+        print(f"⚠️ Balance error: {e}")
+        return None
 
 # ============================================================
 # FLASK ALKALMAZÁS
@@ -308,7 +309,6 @@ def create_payment_intent():
             return jsonify({'clientSecret': intent.client_secret})
         
         elif product_id:
-            # TERMÉK VÁSÁRLÁS KÁRTYÁVAL
             product = Product.query.get(int(product_id))
             if not product:
                 return jsonify({'error': 'Product not found'}), 404
@@ -326,14 +326,13 @@ def create_payment_intent():
             ds_balance = check_dailystore_balance()
             
             # Ha nem tudtuk lekérni a balance-t
-            if ds_balance == 0:
-                send_admin_alert("⚠️ BALANCE CHECK FAILED!", f"Could not verify balance for {product.name}")
+            if ds_balance is None:
                 return jsonify({
                     'error': 'Cannot verify store balance. Please try again later.',
                     'error_type': 'balance_check_failed'
                 }), 503
             
-            # HA NINCS ELÉG BALANCE A DAILYSTORE-BAN - EZ A LÉNYEG!
+            # HA NINCS ELÉG BALANCE A DAILYSTORE-BAN
             if ds_balance < product.daily_store_price:
                 send_admin_alert("⚠️ LOW DAILYSTORE BALANCE!", 
                     f"Balance: ${ds_balance:.2f}, Need: ${product.daily_store_price:.2f} for {product.name}")
@@ -410,8 +409,7 @@ def purchase_with_balance():
         
         # 3. DAILYSTORE BALANCE ELLENŐRZÉS
         ds_balance = check_dailystore_balance()
-        if ds_balance == 0:
-            send_admin_alert("⚠️ BALANCE CHECK FAILED!", f"Could not verify balance for {product.name}")
+        if ds_balance is None:
             return jsonify({
                 'error': 'Cannot verify store balance. Please try again later.',
                 'error_type': 'balance_check_failed'
@@ -500,7 +498,7 @@ def purchase_with_balance():
         
         # 8. ALACSONY BALANCE FIGYELMEZTETÉS
         new_balance = check_dailystore_balance()
-        if new_balance > 0 and new_balance < 20:
+        if new_balance is not None and new_balance > 0 and new_balance < 20:
             send_admin_alert("⚠️ Low DailyStore Balance", f"Current balance: ${new_balance:.2f}. Please top up soon!")
         
         return jsonify({
