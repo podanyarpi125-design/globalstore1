@@ -223,7 +223,7 @@
             toastText.innerHTML = message;
             toast.classList.remove('hidden');
             toast.classList.add('flex');
-            setTimeout(() => { toast.classList.add('hidden'); toast.classList.remove('flex'); }, 4000);
+            setTimeout(() => { toast.classList.add('hidden'); toast.classList.remove('flex'); }, 5000);
         }
 
         window.buyCard = async function(productId, productName) {
@@ -238,15 +238,15 @@
                 const data = await res.json();
                 
                 if (data.error) {
-                    // MINDEN HIBA TÍPUS KEZELÉSE
                     const errorType = data.error_type;
                     
                     if (errorType === 'out_of_stock') {
                         showToast('⚠️ ' + data.error, 'warning');
                     } 
                     else if (errorType === 'insufficient_dailystore_balance') {
-                        // EZ VOLT A HIÁNYZÓ! 
-                        showToast(`⚠️ ${data.error}`, 'warning');
+                        const required = data.required || 'unknown';
+                        const available = data.available || 'unknown';
+                        showToast(`⚠️ Insufficient store balance! Required: $${required}, Available: $${available}. Please contact support.`, 'warning');
                     }
                     else if (errorType === 'dailystore_balance') {
                         showToast('⚠️ ' + data.error, 'warning');
@@ -384,7 +384,9 @@
                     if (errorType === 'out_of_stock') {
                         showToast('⚠️ ' + data.error, 'warning');
                     } else if (errorType === 'insufficient_dailystore_balance') {
-                        showToast('⚠️ ' + data.error, 'warning');
+                        const required = data.required || 'unknown';
+                        const available = data.available || 'unknown';
+                        showToast(`⚠️ Insufficient store balance! Required: $${required}, Available: $${available}.`, 'warning');
                     } else if (errorType === 'dailystore_balance') {
                         showToast('⚠️ ' + data.error, 'warning');
                     } else if (errorType === 'user_balance') {
